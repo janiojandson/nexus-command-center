@@ -1,39 +1,94 @@
-// backend/controllers/hipocampoController.js
+// ============================================
+// HIPOCAMPO CONTROLLER
+// Memória Vetorial e Base de Conhecimento
+// ============================================
 
-// Controlador para interagir com o Hipocampo
-class HipocampoController {
-  // GET /hipocampo/memories
-  async getMemories(req, res) {
-    try {
-      // Lógica para buscar memórias do Hipocampo
-      const memories = await this.fetchMemoriesFromHipocampo();
-      res.json(memories);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
+const memories = new Map();
+let nextId = 1;
+
+exports.getAllMemories = (req, res) => {
+  const allMemories = Array.from(memories.values());
+
+  // Suporte a filtro por categoria via query param
+  const { categoria } = req.query;
+  let filtered = allMemories;
+
+  if (categoria) {
+    filtered = allMemories.filter(m => m.categoria === categoria);
   }
 
-  // POST /hipocampo/memories
-  async createMemory(req, res) {
-    try {
-      // Lógica para criar uma nova memória no Hipocampo
-      const memory = await this.createMemoryInHipocampo(req.body);
-      res.status(201).json(memory);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
+  res.json({
+    success: true,
+    count: filtered.length,
+    data: filtered
+  });
+};
+
+exports.getMemoryById = (req, res) => {
+  const { id } = req.params;
+  const memory = memories.get(id);
+
+  if (!memory) {
+    return res.status(404).json({
+      success: false,
+      error: 'Memória não encontrada',
+      message: `Nenhuma memória com ID ${id} existe no Hipocampo`
+    });
   }
 
-  // Métodos privados para interagir com a API do Hipocampo
-  async fetchMemoriesFromHipocampo() {
-    // Implementação da chamada à API do Hipocampo
-    return []; // Retorna uma lista de memórias
+  res.json({ success: true, data: memory });
+};
+
+exports.createMemory = (req, res) => {
+  const { titulo, conteudo, categoria, tags, prioridade } = req.body;
+
+  if (!titulo || !conteudo) {
+    return res.status(400).json({
+      success: false,
+      error: 'Dados obrigatórios em falta',
+      message: 'Os campos "titulo" e "conteudo" são obrigatórios'
+    });
   }
 
-  async createMemoryInHipocampo(memoryData) {
-    // Implementação da criação de uma memória
-    return { id: Date.now(), ...memoryData };
-  }
-}
+  const id = String(nextId++);
+  const memory = {
+    id,
+    titulo,
+    conteudo,
+    categoria: categoria || 'geral',
+    tags: tags || [],
+    prioridade: prioridade || 'media',
+    acessos: 0,
+    criadoEm: new Date().toISOString(),
+    atualizadoEm: new Date().toISOString()
+  };
 
-module.exports = new HipocampoController();
+  memories.set(id, memory);
+
+  res.status(201).json({
+    success: true,
+    message: 'Memória armazenada com sucesso no Hipocampo',
+    data: memory
+  });
+};
+
+exports.deleteMemory = (req, res) => {
+  const { id } = req.params;
+  const memory = memories.get(id);
+
+  if (!memory) {
+    return res.status(404).json({
+      success: false,
+      error: 'Memória não encontrada',
+      message: `Nenhuma memória com ID ${id} existe no Hipocampo`
+    });
+  }
+
+  memories.delete(id);
+
+  res.json({
+    success: true,
+    message: 'Memória eliminada permanentemente do Hipocampo',
+    deletedId: id
+  });
+};
