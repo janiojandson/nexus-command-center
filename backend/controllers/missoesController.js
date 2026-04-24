@@ -1,140 +1,103 @@
 const { query } = require('../config/database');
 
-const STATUS_VALIDOS = ['planeada', 'em_curso', 'concluida', 'cancelada', 'pausada'];
-
-exports.getAllMissoes = async (req, res) => {
+/**
+ * GET /missoes
+ * Listar todas as missões com filtro opcional por status
+ */
+exports.listarMissoes = async (req, res) => {
   try {
     const { status } = req.query;
-    const text = 'SELECT * FROM missoes';
+    const conditions = [];
     const params = [];
+
     if (status) {
-      text += ' WHERE status = $1';
+      conditions.push('status = $' + (params.length + 1));
       params.push(status);
     }
-    const result = await query(text, params);
-    res.json({
-      success: true,
-      count: result.rows.length,
-      data: result.rows
-    });
-  } catch (error) {
-    console.error('[MISSOES-CONTROLLER] Erro em getAllMissoes:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Erro interno do servidor',
-      message: error.message
-    });
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const result = await query(`SELECT * FROM missoes ${whereClause}`, params);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('[MISSOES-CTRL] Erro ao listar missões:', err.message);
+    res.status(500).json({ error: 'Erro interno do servidor' });
   }
 };
 
-exports.getMissaoById = async (req, res) => {
+/**
+ * GET /missoes/:id
+ */
+exports.obterMissao = async (req, res) => {
   try {
     const { id } = req.params;
     const result = await query('SELECT * FROM missoes WHERE id = $1', [id]);
-    const missao = result.rows[0];
-    if (!missao) {
-      return res.status(404).json({
-        success: false,
-        error: 'Missão não encontrada',
-        message: `Nenhuma missão com ID ${id} existe no sistema`
-      });
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Missão não encontrada' });
     }
-    res.json({ success: true, data: missao });
-  } catch (error) {
-    console.error('[MISSOES-CONTROLLER] Erro em getMissaoById:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Erro interno do servidor',
-      message: error.message
-    });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[MISSOES-CTRL] Erro ao obter missao:', err.message);
+    res.status(500).json({ error: 'Erro interno do servidor' });
   }
 };
 
-exports.createMissao = async (req, res) => {
+/**
+ * POST /missoes
+ */
+exports.criarMissao = async (req, res) => {
   try {
-    const { titulo, descricao, prioridade, responsavel, prazo } = req.body;
-    if (!titulo || !descricao) {
-      return res.status(400).json({
-        success: false,
-        error: 'Dados obrigatórios em falta',
-        message: 'Os campos \"titulo\" e \"descricao\" são obrigatórios'
-      });
+    const { titulo, descricao, status } = req.body;
+    if (!titulo || !status) {
+      return res.status(400).json({ error: 'Título e status são obrigatórios' });
     }
-    const statusInicial = 'planeada';
-    const historicoInicial = JSON.stringify([{
-      status: statusInicial,
-      timestamp: new Date().toISOString(),
-      observacao: 'Missão criada'
-    }]);
-
-    const sql = `
-      INSERT INTO missoes (titulo, descricao, prioridade, status, responsavel, prazo, progresso, historico, criado_em, atualizado_em)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
-      RETURNING *
-    `;
-    const values = [titulo, descricao, prioridade || 'media', statusInicial, responsavel || 'não atribuído', prazo || null, 0, historicoInicial];
-    const result = await query(sql, values);
-    const novaMissao = result.rows[0];
-    res.status(201).json({
-      success: true,
-      message: 'Missão registada com sucesso no sistema de operações',
-      data: novaMissao
-    });
-  } catch (error) {
-    console.error('[MISSOES-CONTROLLER] Erro em createMissao:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Erro interno do servidor',
-      message: error.message
-    });
+    const result = await query(
+      `INSERT INTO missoes (titulo, descricao, status) VALUES ($1, $2, $3) RETURNING *`,
+      [titulo, descricao || null, status]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error('[MISSOES-CTRL] Erro ao criar missao:', err.message);
+    res.status(500).json({ error: 'Erro interno do servidor' });
   }
 };
 
-exports.updateMissaoStatus = async (req, res) => {
+/**
+ * PUT /missoes/:id
+ */
+exports.atualizarMissao = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, observacao } = req.body;
-    if (!status) {
-      return res.status(400).json({
-        success: false,
-        error: 'Status obrigatório',
-        message: 'O campo \"status\" é obrigatório para atualização'
-      });
+    const { titulo, descricao, status } = req.body;
+    if (!titulo || !status) {
+      return res.status(400).json({ error: 'Título e status são obrigatórios' });
     }
-    if (!STATUS_VALIDOS.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Status inválido',
-        message: `Status deve ser um de: ${STATUS_VALIDOS.join(', ')}`
-      });
-    }
-    const selectResult = await query('SELECT * FROM missoes WHERE id = $1', [id]);
-    if (!selectResult.rows[0]) {
-      return res.status(404).json({
-        success: false,
-        error: 'Missão não encontrada',
-        message: `Nenhuma missão com ID ${id} existe no sistema`
-      });
-    }
-    const missao = selectResult.rows[0];
-    const historico = JSON.parse(missao.historico || '[]');
-    const novoHistorico = [...historico, {
-      status,
-      timestamp: new Date().toISOString(),
-      observacao: observacao || `Status alterado de "${missao.status}" para "${status}"`
-    }];
-    await query(
-      `UPDATE missoes SET status = $1, historico = $2, atualizado_em = NOW() WHERE id = $3`,
-      [status, JSON.stringify(novoHistorico), id]
+    const result = await query(
+      `UPDATE missoes SET titulo = $2, descricao = $3, status = $4, \"updatedAt\" = NOW() WHERE id = $1 RETURNING *`,
+      [id, titulo, descricao || null, status]
     );
-    const updatedMissao = await query('SELECT * FROM missoes WHERE id = $1', [id]);
-    res.json({ success: true, data: updatedMissao.rows[0] });
-  } catch (error) {
-    console.error('[MISSOES-CONTROLLER] Erro em updateMissaoStatus:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Erro interno do servidor',
-      message: error.message
-    });
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Missão não encontrada' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[MISSOES-CTRL] Erro ao atualizar missao:', err.message);
+    res.status(500).json({ error: 'Erro interno do servidor' });
   }
-}
+};
+
+/**
+ * DELETE /missoes/:id
+ */
+exports.excluirMissao = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await query('DELETE FROM missoes WHERE id = $1', [id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Missão não encontrada' });
+    }
+    res.status(204).send();
+  } catch (err) {
+    console.error('[MISSOES-CTRL] Erro ao excluir missao:', err.message);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+};
