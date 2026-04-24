@@ -1,33 +1,28 @@
 const express = require('express');
 const router = express.Router();
 
-// Controladores
+// Importar os controladores atualizados e blindados com PostgreSQL
+// Nota: Passámos a usar o missionsController que contém as rotas modernas
 const headhunterController = require('../controllers/headhunterController');
 const hipocampoController = require('../controllers/hipocampoController');
-const missoesController = require('../controllers/missoesController');
+const missionsController = require('../controllers/missionsController');
 
 // ============================================
-// HEADHUNTER - Recrutamento e Gestão de Talentos (4 endpoints)
+// HEADHUNTER - Recrutamento e Gestão de Talentos
 // ============================================
-router.get('/api/headhunter/candidates', headhunterController.getAllCandidates);
-router.post('/api/headhunter/candidates', headhunterController.createCandidate);
-router.get('/api/headhunter/candidates/:id', headhunterController.getCandidateById);
-router.put('/api/headhunter/candidates/:id', headhunterController.updateCandidate);
+// O controlador já traz as rotas (/agents, /specialties, etc.), só precisamos de montá-las.
+router.use('/api/headhunter', headhunterController.router);
 
 // ============================================
-// HIPOCAMPO - Memória e Base de Conhecimento (4 endpoints)
+// HIPOCAMPO - Memória Vetorial e Conhecimento
 // ============================================
-router.get('/api/hipocampo/memories', hipocampoController.getAllMemories);
-router.post('/api/hipocampo/memories', hipocampoController.createMemory);
-router.get('/api/hipocampo/memories/:id', hipocampoController.getMemoryById);
-router.delete('/api/hipocampo/memories/:id', hipocampoController.deleteMemory);
+// O controlador já traz as rotas (/memories, /stats, etc.)
+router.use('/api/hipocampo', hipocampoController.router);
 
 // ============================================
-// MISSÕES - Operações e Tracking (4 endpoints)
+// MISSÕES - Lançamento e Tracking
 // ============================================
-router.get('/api/missoes', missoesController.getAllMissoes);
-router.post('/api/missoes', missoesController.createMissao);
-router.get('/api/missoes/:id', missoesController.getMissaoById);
-router.patch('/api/missoes/:id/status', missoesController.updateMissaoStatus);
+// O controlador já traz as rotas principais das missões
+router.use('/api/missions', missionsController.router);
 
 module.exports = router;
