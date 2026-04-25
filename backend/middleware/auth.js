@@ -1,25 +1,63 @@
+/**
+ * ============================================================
+ * NEXUS COMMAND CENTER — Middleware de Autenticação JWT
+ * ============================================================
+ * Verifica o token JWT no header Authorization: Bearer <token>
+ * Aplica-se antes das rotas protegidas da API.
+ * Rotas públicas: /api/auth/*, /health
+ * ============================================================
+ */
+
 const jwt = require('jsonwebtoken');
 
-const authenticate = (req, res, next) => {
-  const token = req.header('Authorization')?.replace('Bearer ', '');
-  
+// Rotas que NÃO exigem autenticação
+const PUBLIC_ROUTES = [
+  '/api/auth/login',
+  '/api/auth/verify',
+  '/health',
+];
+
+function authMiddleware(req, res, next) {
+  // Verificar se a rota é pública
+  if (PUBLIC_ROUTES.some(route => req.path.startsWith(route))) {
+    return next();
+  }
+
+  // Verificar se a rota é de API (apenas APIs precisam de JWT)
+  if (!req.path.startsWith('/api/')) {
+    return next();
+  }
+
+  // Extrair token
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.replace('Bearer ', '');
+
   if (!token) {
-    return res.status(401).json({ 
-      success: false, 
-      error: 'Acesso negado - Token necessário' 
+    return res.status(401).json({
+      success: false,
+      error: 'Token de autenticação necessário',
+      code: 'NO_TOKEN'
     });
   }
-  
+
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded;
     next();
   } catch (err) {
-    res.status(400).json({ 
-      success: false, 
-      error: 'Token inválido ou expirado' 
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({
+        success: false,
+        error: 'Token expirado — faça login novamente',
+        code: 'TOKEN_EXPIRED'
+      });
+    }
+    return res.status(401).json({
+      success: false,
+      error: 'Token inválido',
+      code: 'INVALID_TOKEN'
     });
   }
-};
+}
 
-module.exports = { authenticate };
+module.exports = authMiddleware;
