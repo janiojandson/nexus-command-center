@@ -1,5 +1,5 @@
 # 🔴 CHECKPOINT DE AUDITORIA — Nexus Command Center
-> Última atualização: Operação de Retoma — Ciclo 1 concluído
+> Última atualização: Operação de Retoma — Ciclos 1 e 2 concluídos
 > Regra: Nenhum item [PENDENTE] pode existir ao final da operação.
 
 ---
@@ -8,50 +8,51 @@
 
 ### Erro 1 — O FANTASMA DO MAP [RESOLVIDO]
 - **Ficheiro:** `backend/services/memory.js`
-- **Problema:** Usa `new Map()` para persistência de vetores. Dados são voláteis — perdidos a cada restart. O módulo `config/database.js` já tem o pool PostgreSQL configurado, mas `memory.js` ignora-o completamente.
+- **Problema:** Usa `new Map()` para persistência de vetores. Dados são voláteis — perdidos a cada restart.
 - **Impacto:** Perda total de dados em memória vetorial. Impossível escalar.
 - **Resolução:** Reescrito para usar `db.query()` do pool PostgreSQL. Queries parametrizadas. Tabela `memory_vectors` com UUID auto-gerado.
 
-### Erro 2 — A PORTA GIRATÓRIA JWT [PENDENTE]
+### Erro 2 — A PORTA GIRATÓRIA JWT [RESOLVIDO]
 - **Ficheiro:** `backend/middleware/requireAuth.js`
-- **Problema:** Referencia `jwt.verify()` sem importar o módulo `jsonwebtoken`. Vai crashar em runtime. Além disso, importa `{ authenticate }` de `./auth`, mas `auth.js` exporta `authMiddleware`, não `authenticate`.
-- **Impacto:** Middleware de autenticação secundário inoperante. Rotas que usem `requireAuth` vão crashar.
+- **Problema:** Referencia `jwt.verify()` sem importar `jsonwebtoken`. Importa `{ authenticate }` inexistente.
+- **Impacto:** Middleware de autenticação secundário inoperante. Crash em runtime.
+- **Resolução:** Import `jsonwebtoken` adicionado. Import corrigido para `{ authMiddleware }`. Lógica JWT reescrita com códigos de erro padronizados.
 
 ### Erro 3 — O PORTÃO ABERTO DE CORS [PENDENTE]
 - **Ficheiro:** `backend/config/server.js`
-- **Problema:** Usa `app.use(cors())` sem whitelist. Qualquer domínio pode fazer requisições à API. O `server.js` principal tem CORS restrito, mas este ficheiro alternativo está completamente aberto.
+- **Problema:** Usa `app.use(cors())` sem whitelist. Qualquer domínio pode fazer requisições à API.
 - **Impacto:** Bypass total de CORS se este ficheiro for carregado em vez do principal.
 
 ### Erro 4 — RATE LIMITING AUSENTE NO CONFIG/SERVER [PENDENTE]
 - **Ficheiro:** `backend/config/server.js`
-- **Problema:** Não aplica `express-rate-limit`. O `server.js` principal tem, mas este ficheiro alternativo não.
+- **Problema:** Não aplica `express-rate-limit`.
 - **Impacto:** Ataques de força bruta e DDoS sem travão se este config for usado.
 
 ### Erro 5 — AUTH MIDDLEWARE NÃO APLICADO NO CONFIG/SERVER [PENDENTE]
 - **Ficheiro:** `backend/config/server.js`
-- **Problema:** Importa `{ authenticate }` de `../middleware/auth` mas nunca o aplica como middleware nas rotas. Todas as rotas ficam públicas.
-- **Impacto:** Qualquer request sem token acede a toda a API.
+- **Problema:** Importa `{ authenticate }` mas nunca o aplica nas rotas.
+- **Impacto:** Todas as rotas ficam públicas.
 
 ### Erro 6 — IDs NÃO-SEGUROS NO MEMORY SERVICE [RESOLVIDO]
 - **Ficheiro:** `backend/services/memory.js`
-- **Problema:** Usa `Date.now().toString()` como ID. Colisões em requisições concorrentes. Não é criptograficamente seguro.
-- **Impacto:** Sobrescrita de dados, corrupção de memória vetorial.
+- **Problema:** Usa `Date.now().toString()` como ID.
+- **Impacto:** Colisões em requisições concorrentes.
 - **Resolução:** IDs agora são UUIDs auto-gerados pelo PostgreSQL (`gen_random_uuid()`).
 
 ### Erro 7 — VALIDAÇÃO DE INPUT AUSENTE NO MEMORY SERVICE [RESOLVIDO]
 - **Ficheiro:** `backend/services/memory.js`
-- **Problema:** O método `store()` aceita qualquer `vectorData` sem validação de schema, tipo ou tamanho.
-- **Impacto:** Injeção de dados malformados, potencial DoS por payloads gigantes.
-- **Resolução:** Validação de tipo (objeto não-nulo), tamanho máximo de 1MB, e validação de UUID no delete.
+- **Problema:** O método `store()` aceita qualquer `vectorData` sem validação.
+- **Impacto:** Injeção de dados malformados, potencial DoS.
+- **Resolução:** Validação de tipo, tamanho máximo de 1MB, validação de UUID no delete.
 
 ### Erro 8 — CORS PERMITE REQUESTS SEM ORIGIN [PENDENTE]
 - **Ficheiro:** `backend/server.js`
-- **Problema:** A callback do CORS retorna `callback(null, true)` para requests sem origin (`if (!origin)`). Postman, curl e scripts maliciosos bypassam a whitelist.
+- **Problema:** A callback do CORS retorna `callback(null, true)` para requests sem origin.
 - **Impacto:** A whitelist de CORS é ineficaz contra ferramentas automatizadas.
 
 ### Erro 9 — DUPLICAÇÃO DE CONFIGURAÇÃO DE SERVIDOR [PENDENTE]
 - **Ficheiro:** `backend/server.js` vs `backend/config/server.js`
-- **Problema:** Existem dois ficheiros de configuração do servidor com configurações contraditórias. O principal é seguro, o alternativo é vulnerável.
+- **Problema:** Existem dois ficheiros de configuração do servidor com configurações contraditórias.
 - **Impacto:** Confusão arquitetural, risco de deploy do ficheiro errado.
 
 ### Erro 10 — SEM PROTEÇÃO CSRF [PENDENTE]
@@ -66,26 +67,28 @@
 
 ### Erro 12 — VAZAMENTO DE STACK TRACE EM PRODUÇÃO [PENDENTE]
 - **Ficheiro:** `backend/server.js`
-- **Problema:** O handler de erro global faz `console.error(err.stack)` mas não sanitiza a resposta. Em ambientes mal configurados, o stack pode vazar para o cliente.
+- **Problema:** O handler de erro global pode vazar stack trace para o cliente.
 - **Impacto:** Exposição de internals do sistema.
 
-### Erro 13 — SEM LOG DE FALHAS DE AUTENTICAÇÃO [PENDENTE]
+### Erro 13 — SEM LOG DE FALHAS DE AUTENTICAÇÃO [RESOLVIDO]
 - **Ficheiro:** `backend/middleware/auth.js`
-- **Problema:** Tokens inválidos ou expirados são rejeitados mas não há log de segurança para detectar ataques.
-- **Impacto:** Impossível detectar força bruta ou tokens roubados em tempo real.
+- **Problema:** Tokens inválidos ou expirados são rejeitados sem log de segurança.
+- **Impacto:** Impossível detectar força bruta ou tokens roubados.
+- **Resolução:** Logs de segurança adicionados com IP e path para tokens rejeitados e validados.
 
 ### Erro 14 — SEM HEALTH CHECK DO BANCO DE DADOS [PENDENTE]
 - **Ficheiro:** `backend/config/database.js`
-- **Problema:** Não existe endpoint ou mecanismo para verificar se o PostgreSQL está acessível.
+- **Problema:** Não existe endpoint para verificar se o PostgreSQL está acessível.
 - **Impacto:** Falhas silenciosas de conexão, debug impossível em produção.
 
-### Erro 15 — EXPORTAÇÃO INCONSISTENTE DO MIDDLEWARE DE AUTH [PENDENTE]
+### Erro 15 — EXPORTAÇÃO INCONSISTENTE DO MIDDLEWARE DE AUTH [RESOLVIDO]
 - **Ficheiro:** `backend/middleware/auth.js` vs `backend/middleware/requireAuth.js`
-- **Problema:** `auth.js` exporta `module.exports = authMiddleware` (default), mas `requireAuth.js` tenta importar `{ authenticate }` (named). Incompatibilidade de exportação.
+- **Problema:** `auth.js` exporta default, `requireAuth.js` tenta importar named `{ authenticate }`.
 - **Impacto:** `requireAuth.js` recebe `undefined`, middleware nunca é aplicado.
+- **Resolução:** `auth.js` agora exporta ambos (default + named `authMiddleware`). `requireAuth.js` importa corretamente `{ authMiddleware }`.
 
 ---
 
 ## PROGRESSO
-- [PENDENTE]: 12/15
-- [RESOLVIDO]: 3/15 ✅
+- [PENDENTE]: 9/15
+- [RESOLVIDO]: 6/15 ✅
