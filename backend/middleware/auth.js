@@ -33,6 +33,7 @@ function authMiddleware(req, res, next) {
   const token = authHeader?.replace('Bearer ', '');
 
   if (!token) {
+    console.warn(`[NEXUS-AUTH] ⚠️ Token rejeitado: Token ausente — IP: ${req.ip}, Path: ${req.path}`);
     return res.status(401).json({
       success: false,
       error: 'Token de autenticação necessário',
@@ -43,15 +44,22 @@ function authMiddleware(req, res, next) {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded;
+
+    const userId = req.user.sub || req.user.id || 'desconhecido';
+    console.log(`[NEXUS-AUTH] ✅ Token válido para user: ${userId} — IP: ${req.ip}, Path: ${req.path}`);
+
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
+      console.warn(`[NEXUS-AUTH] ⚠️ Token rejeitado: EXPIRADO — IP: ${req.ip}, Path: ${req.path}`);
       return res.status(401).json({
         success: false,
         error: 'Token expirado — faça login novamente',
         code: 'TOKEN_EXPIRED'
       });
     }
+
+    console.warn(`[NEXUS-AUTH] ⚠️ Token rejeitado: INVÁLIDO — IP: ${req.ip}, Path: ${req.path}`);
     return res.status(401).json({
       success: false,
       error: 'Token inválido',
@@ -60,4 +68,7 @@ function authMiddleware(req, res, next) {
   }
 }
 
+// Default export (compatibilidade com código existente)
 module.exports = authMiddleware;
+// Named export (para importação desestruturada)
+module.exports.authMiddleware = authMiddleware;
