@@ -1,15 +1,16 @@
 # 🔴 CHECKPOINT DE AUDITORIA — Nexus Command Center
-> Última atualização: Operação de Retoma
+> Última atualização: Operação de Retoma — Ciclo 1 concluído
 > Regra: Nenhum item [PENDENTE] pode existir ao final da operação.
 
 ---
 
 ## LISTA DE VULNERABILIDADES CRÍTICAS
 
-### Erro 1 — O FANTASMA DO MAP [PENDENTE]
+### Erro 1 — O FANTASMA DO MAP [RESOLVIDO]
 - **Ficheiro:** `backend/services/memory.js`
 - **Problema:** Usa `new Map()` para persistência de vetores. Dados são voláteis — perdidos a cada restart. O módulo `config/database.js` já tem o pool PostgreSQL configurado, mas `memory.js` ignora-o completamente.
 - **Impacto:** Perda total de dados em memória vetorial. Impossível escalar.
+- **Resolução:** Reescrito para usar `db.query()` do pool PostgreSQL. Queries parametrizadas. Tabela `memory_vectors` com UUID auto-gerado.
 
 ### Erro 2 — A PORTA GIRATÓRIA JWT [PENDENTE]
 - **Ficheiro:** `backend/middleware/requireAuth.js`
@@ -31,15 +32,17 @@
 - **Problema:** Importa `{ authenticate }` de `../middleware/auth` mas nunca o aplica como middleware nas rotas. Todas as rotas ficam públicas.
 - **Impacto:** Qualquer request sem token acede a toda a API.
 
-### Erro 6 — IDs NÃO-SEGUROS NO MEMORY SERVICE [PENDENTE]
+### Erro 6 — IDs NÃO-SEGUROS NO MEMORY SERVICE [RESOLVIDO]
 - **Ficheiro:** `backend/services/memory.js`
 - **Problema:** Usa `Date.now().toString()` como ID. Colisões em requisições concorrentes. Não é criptograficamente seguro.
 - **Impacto:** Sobrescrita de dados, corrupção de memória vetorial.
+- **Resolução:** IDs agora são UUIDs auto-gerados pelo PostgreSQL (`gen_random_uuid()`).
 
-### Erro 7 — VALIDAÇÃO DE INPUT AUSENTE NO MEMORY SERVICE [PENDENTE]
+### Erro 7 — VALIDAÇÃO DE INPUT AUSENTE NO MEMORY SERVICE [RESOLVIDO]
 - **Ficheiro:** `backend/services/memory.js`
 - **Problema:** O método `store()` aceita qualquer `vectorData` sem validação de schema, tipo ou tamanho.
 - **Impacto:** Injeção de dados malformados, potencial DoS por payloads gigantes.
+- **Resolução:** Validação de tipo (objeto não-nulo), tamanho máximo de 1MB, e validação de UUID no delete.
 
 ### Erro 8 — CORS PERMITE REQUESTS SEM ORIGIN [PENDENTE]
 - **Ficheiro:** `backend/server.js`
@@ -84,5 +87,5 @@
 ---
 
 ## PROGRESSO
-- [PENDENTE]: 15/15
-- [RESOLVIDO]: 0/15
+- [PENDENTE]: 12/15
+- [RESOLVIDO]: 3/15 ✅
