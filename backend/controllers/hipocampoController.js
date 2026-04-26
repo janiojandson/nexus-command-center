@@ -1,36 +1,49 @@
 /**
  * ============================================================
- * NEXUS COMMAND CENTER — Hipocampo Controller
+ * NEXUS COMMAND CENTER — Hipocampo Controller (BLINDADO)
  * ============================================================
  * MIGRAÇÃO COMPLETA: new Map() → PostgreSQL (pg)
  * Tabela: hipocampo_memories
  * Queries 100% parametrizadas ($1, $2, ...) — ZERO concatenação.
+ * INPUT VALIDADO: Todos os campos verificados e sanitizados.
  * ============================================================
  */
 
 const express = require('express');
 const router = express.Router();
 const { query, transaction } = require('../config/database');
+const { validate, sanitizeString } = require('../middleware/validate');
+
+// ── Schemas de Validação ──────────────────────────────────────
+const storeMemorySchema = {
+  agent_name: { type: 'string', required: true, minLength: 1, maxLength: 100, sanitize: true },
+  query: { type: 'string', required: true, minLength: 1, maxLength: 5000, sanitize: true },
+  response: { type: 'string', required: true, minLength: 1, maxLength: 50000, sanitize: true },
+  metadata: { type: 'object', required: false },
+};
+
+const updateMemorySchema = {
+  response: { type: 'string', required: false, minLength: 1, maxLength: 50000, sanitize: true },
+  metadata: { type: 'object', required: false },
+};
 
 // ── CRUD: Memórias do Hipocampo ───────────────────────────────
 
 /**
  * Armazena uma nova memória no Hipocampo.
- * POST /api/hipocampo/memories
  */
 const storeMemory = async (agentName, queryText, response, metadata = {}) => {
   const result = await query(
     `INSERT INTO hipocampo_memories (agent_name, query, response, metadata, created_at, updated_at)
      VALUES ($1, $2, $3, $4, NOW(), NOW())
      RETURNING *`,
-    [agentName, queryText, response, JSON.stringify(metadata)]
+    [sanitizeString(agentName), sanitizeString(queryText), sanitizeString(response), JSON.stringify(metadata)]
   );
   return result.rows[0];
 };
 
 /**
  * Obtém uma memória pelo ID.
- * GET /api/hipocampo/memories/:id
  */
 const getMemory = async (id) => {
   const result = await query(
@@ -42,7 +55,6 @@ const getMemory = async (id) => {
 
 /**
  * Pesquisa memórias por agente e/ou termo de busca.
- * GET /api/hipocampo/memories?agent=...&search=...&limit=...&offset=...
  */
 const searchMemories = async (agentName, searchTerm, limit = 50, offset = 0) => {
   let sql = `SELECT * FROM hipocampo_memories WHERE 1=1`;
@@ -60,8 +72,12 @@ const searchMemories = async (agentName, searchTerm, limit = 50, offset = 0) => 
     paramIndex++;
   }
 
+  // Limitar paginação
+  const safeLimit = Math.min(Math.max(1, parseInt(limit) || 50), 100);
+  const safeOffset = Math.max(0, parseInt(offset) || 0);
+
   sql += ` ORDER BY created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
-  params.push(limit, offset);
+  params.push(safeLimit, safeOffset);
 
   const result = await query(sql, params);
   return result.rows;
@@ -69,7 +85,6 @@ const searchMemories = async (agentName, searchTerm, limit = 50, offset = 0) => 
 
 /**
  * Actualiza uma memória existente.
- * PUT /api/hipocampo/memories/:id
  */
 const updateMemory = async (id, response, metadata) => {
   const fields = [];
@@ -78,7 +93,7 @@ const updateMemory = async (id, response, metadata) => {
 
   if (response !== undefined) {
     fields.push(`response = $${paramIndex++}`);
-    params.push(response);
+    params.push(sanitizeString(response));
   }
 
   if (metadata !== undefined) {
@@ -100,7 +115,6 @@ const updateMemory = async (id, response, metadata) => {
 
 /**
  * Elimina uma memória pelo ID.
- * DELETE /api/hipocampo/memories/:id
  */
 const deleteMemory = async (id) => {
   const result = await query(
@@ -111,123 +125,97 @@ const deleteMemory = async (id) => {
 };
 
 /**
- * Conta o total de memórias (opcionalmente filtrado por agente).
+ * Obtém estatísticas das memórias.
  */
-const countMemories = async (agentName) => {
-  let sql = `SELECT COUNT(*) as total FROM hipocampo_memories`;
-  const params = [];
-
-  if (agentName) {
-    sql += ` WHERE agent_name = $1`;
-    params.push(agentName);
-  }
-
-  const result = await query(sql, params);
-  return parseInt(result.rows[0].total, 10);
+const getMemoryStats = async () => {
+  const result = await query(`
+    SELECT 
+      COUNT(*) as total_memories,
+      COUNT(DISTINCT agent_name) as unique_agents,
+      MAX(created_at) as last_memory
+    FROM hipocampo_memories
+  `);
+  return result.rows[0];
 };
 
-// ── Rotas Express ─────────────────────────────────────────────
+// ── Rotas Express ──────────────────────────────────────────────
 
-// POST /api/hipocampo/memories — Criar memória
-router.post('/memories', async (req, res) => {
+// Pesquisar memórias
+router.get('/', async (req, res) => {
   try {
-    const { agentName, query: queryText, response, metadata } = req.body;
-
-    if (!agentName || !queryText || !response) {
-      return res.status(400).json({
-        error: 'Campos obrigatórios: agentName, query, response'
-      });
-    }
-
-    const memory = await storeMemory(agentName, queryText, response, metadata);
-    res.status(201).json({ success: true, data: memory });
+    const { agent, search, limit, offset } = req.query;
+    const memories = await searchMemories(agent, search, limit, offset);
+    res.json({ success: true, data: memories });
   } catch (error) {
-    console.error('[HIPOCAMPO] Erro ao armazenar memória:', error.message);
-    res.status(500).json({ error: 'Falha ao armazenar memória', details: error.message });
+    console.error('[NEXUS-HIPO] ❌ Erro ao pesquisar memórias:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
   }
 });
 
-// GET /api/hipocampo/memories/:id — Obter memória por ID
-router.get('/memories/:id', async (req, res) => {
+// Estatísticas
+router.get('/stats', async (req, res) => {
+  try {
+    const stats = await getMemoryStats();
+    res.json({ success: true, data: stats });
+  } catch (error) {
+    console.error('[NEXUS-HIPO] ❌ Erro ao obter estatísticas:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
+  }
+});
+
+// Obter memória por ID
+router.get('/:id', async (req, res) => {
   try {
     const memory = await getMemory(req.params.id);
     if (!memory) {
-      return res.status(404).json({ error: 'Memória não encontrada' });
+      return res.status(404).json({ success: false, error: 'Memória não encontrada', code: 'NOT_FOUND' });
     }
     res.json({ success: true, data: memory });
   } catch (error) {
-    console.error('[HIPOCAMPO] Erro ao obter memória:', error.message);
-    res.status(500).json({ error: 'Falha ao obter memória', details: error.message });
+    console.error('[NEXUS-HIPO] ❌ Erro ao obter memória:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
   }
 });
 
-// GET /api/hipocampo/memories — Pesquisar memórias
-router.get('/memories', async (req, res) => {
+// Criar memória
+router.post('/', validate(storeMemorySchema, 'body'), async (req, res) => {
   try {
-    const { agent: agentName, search: searchTerm, limit = '50', offset = '0' } = req.query;
-    const memories = await searchMemories(
-      agentName,
-      searchTerm,
-      parseInt(limit, 10),
-      parseInt(offset, 10)
-    );
-    const total = await countMemories(agentName);
-    res.json({ success: true, data: memories, total, limit: parseInt(limit, 10), offset: parseInt(offset, 10) });
+    const { agent_name, query, response, metadata } = req.body;
+    const memory = await storeMemory(agent_name, query, response, metadata);
+    res.status(201).json({ success: true, data: memory });
   } catch (error) {
-    console.error('[HIPOCAMPO] Erro ao pesquisar memórias:', error.message);
-    res.status(500).json({ error: 'Falha ao pesquisar memórias', details: error.message });
+    console.error('[NEXUS-HIPO] ❌ Erro ao criar memória:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
   }
 });
 
-// PUT /api/hipocampo/memories/:id — Actualizar memória
-router.put('/memories/:id', async (req, res) => {
+// Actualizar memória
+router.put('/:id', validate(updateMemorySchema, 'body'), async (req, res) => {
   try {
     const { response, metadata } = req.body;
     const memory = await updateMemory(req.params.id, response, metadata);
     if (!memory) {
-      return res.status(404).json({ error: 'Memória não encontrada' });
+      return res.status(404).json({ success: false, error: 'Memória não encontrada', code: 'NOT_FOUND' });
     }
     res.json({ success: true, data: memory });
   } catch (error) {
-    console.error('[HIPOCAMPO] Erro ao actualizar memória:', error.message);
-    res.status(500).json({ error: 'Falha ao actualizar memória', details: error.message });
+    console.error('[NEXUS-HIPO] ❌ Erro ao actualizar memória:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
   }
 });
 
-// DELETE /api/hipocampo/memories/:id — Eliminar memória
-router.delete('/memories/:id', async (req, res) => {
+// Eliminar memória
+router.delete('/:id', async (req, res) => {
   try {
     const memory = await deleteMemory(req.params.id);
     if (!memory) {
-      return res.status(404).json({ error: 'Memória não encontrada' });
+      return res.status(404).json({ success: false, error: 'Memória não encontrada', code: 'NOT_FOUND' });
     }
     res.json({ success: true, data: memory });
   } catch (error) {
-    console.error('[HIPOCAMPO] Erro ao eliminar memória:', error.message);
-    res.status(500).json({ error: 'Falha ao eliminar memória', details: error.message });
+    console.error('[NEXUS-HIPO] ❌ Erro ao eliminar memória:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
   }
 });
 
-// GET /api/hipocampo/stats — Estatísticas do Hipocampo
-router.get('/stats', async (req, res) => {
-  try {
-    const total = await countMemories();
-    const byAgent = await query(
-      `SELECT agent_name, COUNT(*) as count FROM hipocampo_memories GROUP BY agent_name ORDER BY count DESC`
-    );
-    res.json({ success: true, data: { total, byAgent: byAgent.rows } });
-  } catch (error) {
-    console.error('[HIPOCAMPO] Erro ao obter estatísticas:', error.message);
-    res.status(500).json({ error: 'Falha ao obter estatísticas', details: error.message });
-  }
-});
-
-module.exports = {
-  router,
-  storeMemory,
-  getMemory,
-  searchMemories,
-  updateMemory,
-  deleteMemory,
-  countMemories
-};
+module.exports = { router, storeMemory, getMemory, searchMemories, updateMemory, deleteMemory, getMemoryStats };
