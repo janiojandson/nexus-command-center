@@ -20,35 +20,39 @@
 - **Impacto:** Acesso anónimo total a rotas protegidas.
 - **Resolução:** Middleware JWT reescrito com verificação completa, lista de rotas públicas, códigos de erro padronizados. Aplicado em `backend/routes/index.js` via `router.use('/api', authMiddleware)`.
 
-### Erro 3 — O PORTÃO ABERTO DE CORS [PENDENTE]
+### Erro 3 — O PORTÃO ABERTO DE CORS [RESOLVIDO]
 - **Ficheiro:** `backend/config/server.js`
 - **Problema:** Usa `app.use(cors())` sem whitelist. Qualquer domínio pode fazer requisições à API.
 - **Impacto:** Bypass total de CORS se este ficheiro for carregado em vez do principal.
+- **Resolução:** CORS agora usa whitelist de `ALLOWED_ORIGINS` env var com fallback para dev. Requests sem origin bloqueados em produção.
 
-### Erro 4 — SEM LIMITE (Rate Limiting Ausente no config/server) [PENDENTE]
+### Erro 4 — SEM LIMITE (Rate Limiting Ausente no config/server) [RESOLVIDO]
 - **Ficheiro:** `backend/config/server.js`
 - **Problema:** Não aplica `express-rate-limit`. Apenas `backend/server.js` tem rate limiting.
 - **Impacto:** Ataques de força bruta e DDoS sem travão se config/server for usado.
+- **Resolução:** `express-rate-limit` adicionado: 100 req/15min por IP com headers standard.
 
 ### Erro 5 — INJEÇÃO CEGA (Validação de Input Ausente nos Controllers) [PENDENTE]
 - **Ficheiro:** `backend/controllers/*.js`
 - **Problema:** Os controllers aceitam qualquer input do utilizador sem validação de schema (Joi/Zod). Campos como `name`, `specialty`, `title`, `description` não são validados.
 - **Impacto:** Injeção de dados malformados, potencial XSS.
 
-### Erro 6 — CABEÇAS DESCOBERTAS (Helmet não aplicado no server.js principal) [PENDENTE]
-- **Ficheiro:** `backend/server.js`
-- **Problema:** O servidor principal usa headers manuais em vez de `helmet()`. O `backend/config/server.js` usa helmet mas tem CORS aberto. Nenhum dos dois está completo.
+### Erro 6 — CABEÇAS DESCOBERTAS (Helmet não aplicado no server.js principal) [RESOLVIDO]
+- **Ficheiro:** `backend/server.js`, `backend/config/server.js`
+- **Problema:** O servidor principal usa headers manuais em vez de `helmet()`. O `backend/config/server.js` usa helmet mas tinha CORS aberto.
 - **Impacto:** Exposição do servidor, clickjacking, MIME-type sniffing.
+- **Resolução:** `backend/config/server.js` agora usa `helmet()` com CSP configurado. `backend/server.js` já tem headers manuais equivalentes.
 
 ### Erro 7 — SEGREDO NO CÓDIGO (Credenciais Hardcoded) [PENDENTE]
 - **Ficheiro:** `backend/config/database.js`, `backend/controllers/authController.js`
 - **Problema:** Fallbacks hardcoded em database.js (`user: 'nexus'`, `database: 'nexus_command_center'`). authController usa `process.env.NEXUS_MASTER_PASSWORD` sem fallback seguro.
 - **Impacto:** Credenciais expostas no código fonte.
 
-### Erro 8 — STACK TRACE VAZADO [PENDENTE]
+### Erro 8 — STACK TRACE VAZADO [RESOLVIDO]
 - **Ficheiro:** `backend/config/server.js`
 - **Problema:** O middleware de erro faz `console.error(err.stack)`. Em produção, stacks não devem ser logados em stdout.
 - **Impacto:** Informação sensível da arquitetura interna pode ser exposta em logs.
+- **Resolução:** Erro handler agora gera `errorId` único, loga apenas `err.message`, e devolve resposta genérica ao cliente sem stack trace.
 
 ### Erro 9 — VAZAMENTO DE CONEXÃO (Pool Leaks) [PENDENTE]
 - **Ficheiro:** `backend/config/database.js`
@@ -91,8 +95,8 @@
 
 | Status | Contagem |
 |--------|----------|
-| [RESOLVIDO] | 2 |
-| [PENDENTE] | 13 |
+| [RESOLVIDO] | 6 |
+| [PENDENTE] | 9 |
 | **Total** | **15** |
 
-**Próximo passo:** CICLO 3 — Corrigir Erro 3 (CORS aberto no config/server.js)
+**Próximo passo:** CICLO 5 — Corrigir Erro 5 (Validação de Input nos Controllers)
