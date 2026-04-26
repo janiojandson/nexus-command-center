@@ -1,6 +1,8 @@
 # 🔴 CHECKPOINT DE AUDITORIA — Nexus Command Center
-> Última atualização: Operação de Retoma — Ciclos 1 e 2 concluídos
-> Regra: Nenhum item [PENDENTE] pode existir ao final da operação.
+
+**Data da Auditoria:** 2025-01-25
+**Status da Operação:** EM RETOMA — Execução Draconiana
+**Regra:** Nenhum item [PENDENTE] pode existir ao final da operação. Código → Commit → Checkpoint.
 
 ---
 
@@ -8,87 +10,89 @@
 
 ### Erro 1 — O FANTASMA DO MAP [RESOLVIDO]
 - **Ficheiro:** `backend/services/memory.js`
-- **Problema:** Usa `new Map()` para persistência de vetores. Dados são voláteis — perdidos a cada restart.
+- **Problema:** Usa `new Map()` para persistência de vetores. Dados voláteis — perdidos a cada restart. Vazamento de memória.
 - **Impacto:** Perda total de dados em memória vetorial. Impossível escalar.
 - **Resolução:** Reescrito para usar `db.query()` do pool PostgreSQL. Queries parametrizadas. Tabela `memory_vectors` com UUID auto-gerado.
 
 ### Erro 2 — A PORTA GIRATÓRIA JWT [RESOLVIDO]
-- **Ficheiro:** `backend/middleware/requireAuth.js`
-- **Problema:** Referencia `jwt.verify()` sem importar `jsonwebtoken`. Importa `{ authenticate }` inexistente.
-- **Impacto:** Middleware de autenticação secundário inoperante. Crash em runtime.
-- **Resolução:** Import `jsonwebtoken` adicionado. Import corrigido para `{ authMiddleware }`. Lógica JWT reescrita com códigos de erro padronizados.
+- **Ficheiro:** `backend/middleware/auth.js`, `backend/middleware/requireAuth.js`
+- **Problema:** Ausência de validação JWT nas rotas protegidas. Middleware inoperante com imports quebrados.
+- **Impacto:** Acesso anónimo total a rotas protegidas.
+- **Resolução:** Middleware JWT reescrito com verificação completa, lista de rotas públicas, códigos de erro padronizados. Aplicado em `backend/routes/index.js` via `router.use('/api', authMiddleware)`.
 
 ### Erro 3 — O PORTÃO ABERTO DE CORS [PENDENTE]
 - **Ficheiro:** `backend/config/server.js`
 - **Problema:** Usa `app.use(cors())` sem whitelist. Qualquer domínio pode fazer requisições à API.
 - **Impacto:** Bypass total de CORS se este ficheiro for carregado em vez do principal.
 
-### Erro 4 — RATE LIMITING AUSENTE NO CONFIG/SERVER [PENDENTE]
+### Erro 4 — SEM LIMITE (Rate Limiting Ausente no config/server) [PENDENTE]
 - **Ficheiro:** `backend/config/server.js`
-- **Problema:** Não aplica `express-rate-limit`.
-- **Impacto:** Ataques de força bruta e DDoS sem travão se este config for usado.
+- **Problema:** Não aplica `express-rate-limit`. Apenas `backend/server.js` tem rate limiting.
+- **Impacto:** Ataques de força bruta e DDoS sem travão se config/server for usado.
 
-### Erro 5 — AUTH MIDDLEWARE NÃO APLICADO NO CONFIG/SERVER [PENDENTE]
+### Erro 5 — INJEÇÃO CEGA (Validação de Input Ausente nos Controllers) [PENDENTE]
+- **Ficheiro:** `backend/controllers/*.js`
+- **Problema:** Os controllers aceitam qualquer input do utilizador sem validação de schema (Joi/Zod). Campos como `name`, `specialty`, `title`, `description` não são validados.
+- **Impacto:** Injeção de dados malformados, potencial XSS.
+
+### Erro 6 — CABEÇAS DESCOBERTAS (Helmet não aplicado no server.js principal) [PENDENTE]
+- **Ficheiro:** `backend/server.js`
+- **Problema:** O servidor principal usa headers manuais em vez de `helmet()`. O `backend/config/server.js` usa helmet mas tem CORS aberto. Nenhum dos dois está completo.
+- **Impacto:** Exposição do servidor, clickjacking, MIME-type sniffing.
+
+### Erro 7 — SEGREDO NO CÓDIGO (Credenciais Hardcoded) [PENDENTE]
+- **Ficheiro:** `backend/config/database.js`, `backend/controllers/authController.js`
+- **Problema:** Fallbacks hardcoded em database.js (`user: 'nexus'`, `database: 'nexus_command_center'`). authController usa `process.env.NEXUS_MASTER_PASSWORD` sem fallback seguro.
+- **Impacto:** Credenciais expostas no código fonte.
+
+### Erro 8 — STACK TRACE VAZADO [PENDENTE]
 - **Ficheiro:** `backend/config/server.js`
-- **Problema:** Importa `{ authenticate }` mas nunca o aplica nas rotas.
-- **Impacto:** Todas as rotas ficam públicas.
+- **Problema:** O middleware de erro faz `console.error(err.stack)`. Em produção, stacks não devem ser logados em stdout.
+- **Impacto:** Informação sensível da arquitetura interna pode ser exposta em logs.
 
-### Erro 6 — IDs NÃO-SEGUROS NO MEMORY SERVICE [RESOLVIDO]
-- **Ficheiro:** `backend/services/memory.js`
-- **Problema:** Usa `Date.now().toString()` como ID.
-- **Impacto:** Colisões em requisições concorrentes.
-- **Resolução:** IDs agora são UUIDs auto-gerados pelo PostgreSQL (`gen_random_uuid()`).
-
-### Erro 7 — VALIDAÇÃO DE INPUT AUSENTE NO MEMORY SERVICE [RESOLVIDO]
-- **Ficheiro:** `backend/services/memory.js`
-- **Problema:** O método `store()` aceita qualquer `vectorData` sem validação.
-- **Impacto:** Injeção de dados malformados, potencial DoS.
-- **Resolução:** Validação de tipo, tamanho máximo de 1MB, validação de UUID no delete.
-
-### Erro 8 — CORS PERMITE REQUESTS SEM ORIGIN [PENDENTE]
-- **Ficheiro:** `backend/server.js`
-- **Problema:** A callback do CORS retorna `callback(null, true)` para requests sem origin.
-- **Impacto:** A whitelist de CORS é ineficaz contra ferramentas automatizadas.
-
-### Erro 9 — DUPLICAÇÃO DE CONFIGURAÇÃO DE SERVIDOR [PENDENTE]
-- **Ficheiro:** `backend/server.js` vs `backend/config/server.js`
-- **Problema:** Existem dois ficheiros de configuração do servidor com configurações contraditórias.
-- **Impacto:** Confusão arquitetural, risco de deploy do ficheiro errado.
-
-### Erro 10 — SEM PROTEÇÃO CSRF [PENDENTE]
-- **Ficheiro:** `backend/server.js`
-- **Problema:** Nenhum token CSRF ou validação de SameSite em cookies.
-- **Impacto:** Ataques de Cross-Site Request Forgery em rotas autenticadas.
-
-### Erro 11 — SEM LIMITE DE TAMANHO DE REQUEST BODY [PENDENTE]
-- **Ficheiro:** `backend/server.js`
-- **Problema:** `bodyParser` e `express.json()` sem limite explícito de payload.
-- **Impacto:** DoS por payloads gigantes (body bomb).
-
-### Erro 12 — VAZAMENTO DE STACK TRACE EM PRODUÇÃO [PENDENTE]
-- **Ficheiro:** `backend/server.js`
-- **Problema:** O handler de erro global pode vazar stack trace para o cliente.
-- **Impacto:** Exposição de internals do sistema.
-
-### Erro 13 — SEM LOG DE FALHAS DE AUTENTICAÇÃO [RESOLVIDO]
-- **Ficheiro:** `backend/middleware/auth.js`
-- **Problema:** Tokens inválidos ou expirados são rejeitados sem log de segurança.
-- **Impacto:** Impossível detectar força bruta ou tokens roubados.
-- **Resolução:** Logs de segurança adicionados com IP e path para tokens rejeitados e validados.
-
-### Erro 14 — SEM HEALTH CHECK DO BANCO DE DADOS [PENDENTE]
+### Erro 9 — VAZAMENTO DE CONEXÃO (Pool Leaks) [PENDENTE]
 - **Ficheiro:** `backend/config/database.js`
-- **Problema:** Não existe endpoint para verificar se o PostgreSQL está acessível.
-- **Impacto:** Falhas silenciosas de conexão, debug impossível em produção.
+- **Problema:** A função `transaction()` faz `client.release()` no finally, mas não há verificação de conexões órfãs. Falta monitorização do pool.
+- **Impacto:** Conexões do PostgreSQL não liberadas após falhas podem esgotar o pool.
 
-### Erro 15 — EXPORTAÇÃO INCONSISTENTE DO MIDDLEWARE DE AUTH [RESOLVIDO]
-- **Ficheiro:** `backend/middleware/auth.js` vs `backend/middleware/requireAuth.js`
-- **Problema:** `auth.js` exporta default, `requireAuth.js` tenta importar named `{ authenticate }`.
-- **Impacto:** `requireAuth.js` recebe `undefined`, middleware nunca é aplicado.
-- **Resolução:** `auth.js` agora exporta ambos (default + named `authMiddleware`). `requireAuth.js` importa corretamente `{ authMiddleware }`.
+### Erro 10 — CEGUEIRA OPERACIONAL (Logs Não Estruturados) [PENDENTE]
+- **Ficheiro:** Todo o backend
+- **Problema:** Usa `console.log/warn/error` em vez de logger estruturado (Winston/Pino). Sem níveis configuráveis, sem rotação, sem formato JSON para SIEM.
+- **Impacto:** Impossível correlacionar eventos ou fazer auditoria forense.
+
+### Erro 11 — FALSA SOBERANIA (Rotas Admin sem RBAC) [PENDENTE]
+- **Ficheiro:** `backend/routes/index.js`, `backend/controllers/authController.js`
+- **Problema:** O JWT emitido tem `role: 'admin'` fixo. Não há verificação de role nas rotas. Qualquer utilizador autenticado tem acesso total.
+- **Impacto:** Qualquer token válido dá acesso de administrador. Sem segregação de funções.
+
+### Erro 12 — MADEIRA PODRE (Dependências Desatualizadas) [PENDENTE]
+- **Ficheiro:** `backend/package.json`
+- **Problema:** Dependências com versões potencialmente vulneráveis. `npm audit` não foi executado. body-parser deprecated.
+- **Impacto:** Vulnerabilidades conhecidas em dependências transitivas.
+
+### Erro 13 — CANAL ABERTO (Falta de Enforcement HTTPS) [PENDENTE]
+- **Ficheiro:** `backend/server.js`, `backend/config/server.js`
+- **Problema:** Nenhum redirecionamento de HTTP para HTTPS em deploy manual.
+- **Impacto:** Tráfego não encriptado em trânsito. Man-in-the-middle.
+
+### Erro 14 — COOKIES FRACOS (JWT no Body em vez de Cookie Seguro) [PENDENTE]
+- **Ficheiro:** `backend/controllers/authController.js`
+- **Problema:** O JWT é enviado no body da resposta em vez de cookie HttpOnly, Secure, SameSite=Strict. Token exposto a XSS no cliente.
+- **Impacto:** Token JWT roubável via XSS. Sem proteção contra CSRF.
+
+### Erro 15 — FÉ CEGA (Ausência de Testes) [PENDENTE]
+- **Ficheiro:** Todo o backend
+- **Problema:** Zero testes unitários e de integração para autenticação, persistência e controllers.
+- **Impacto:** Regressões silenciosas. Impossível verificar que as correcções funcionam.
 
 ---
 
-## PROGRESSO
-- [PENDENTE]: 9/15
-- [RESOLVIDO]: 6/15 ✅
+## RESUMO DE PROGRESSO
+
+| Status | Contagem |
+|--------|----------|
+| [RESOLVIDO] | 2 |
+| [PENDENTE] | 13 |
+| **Total** | **15** |
+
+**Próximo passo:** CICLO 3 — Corrigir Erro 3 (CORS aberto no config/server.js)
