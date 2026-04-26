@@ -1,16 +1,36 @@
 /**
  * ============================================================
- * NEXUS COMMAND CENTER — Headhunter Controller
+ * NEXUS COMMAND CENTER — Headhunter Controller (BLINDADO)
  * ============================================================
  * MIGRAÇÃO COMPLETA: new Map() → PostgreSQL (pg)
  * Tabela: headhunter_agents
  * Queries 100% parametrizadas ($1, $2, ...) — ZERO concatenação.
+ * INPUT VALIDADO: Todos os campos verificados e sanitizados.
  * ============================================================
  */
 
 const express = require('express');
 const router = express.Router();
 const { query } = require('../config/database');
+const { validate, sanitizeString } = require('../middleware/validate');
+
+// ── Schemas de Validação ──────────────────────────────────────
+const createAgentSchema = {
+  name: { type: 'string', required: true, minLength: 1, maxLength: 100, sanitize: true },
+  specialty: { type: 'string', required: true, minLength: 1, maxLength: 100, sanitize: true },
+  capabilities: { type: 'array', required: false },
+};
+
+const updateAgentSchema = {
+  name: { type: 'string', required: false, minLength: 1, maxLength: 100, sanitize: true },
+  specialty: { type: 'string', required: false, minLength: 1, maxLength: 100, sanitize: true },
+  capabilities: { type: 'array', required: false },
+  status: { type: 'string', required: false, enum: ['available', 'busy', 'inactive'] },
+};
+
+const rateAgentSchema = {
+  rating: { type: 'number', required: true, min: 0, max: 5 },
+};
 
 // ── CRUD: Agentes do Headhunter ────────────────────────────────
 
@@ -19,7 +39,7 @@ const registerAgent = async (name, specialty, capabilities = []) => {
     `INSERT INTO headhunter_agents (name, specialty, capabilities, status, rating, created_at, updated_at)
      VALUES ($1, $2, $3, 'available', 0.00, NOW(), NOW())
      RETURNING *`,
-    [name, specialty, JSON.stringify(capabilities)]
+    [sanitizeString(name), sanitizeString(specialty), JSON.stringify(capabilities)]
   );
   return result.rows[0];
 };
@@ -52,8 +72,12 @@ const listAgents = async (filters = {}, limit = 50, offset = 0) => {
     params.push(parseFloat(filters.minRating));
   }
 
+  // Limitar paginação para evitar abuso
+  const safeLimit = Math.min(Math.max(1, parseInt(limit) || 50), 100);
+  const safeOffset = Math.max(0, parseInt(offset) || 0);
+
   sql += ` ORDER BY rating DESC, created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
-  params.push(limit, offset);
+  params.push(safeLimit, safeOffset);
 
   const result = await query(sql, params);
   return result.rows;
@@ -72,7 +96,7 @@ const updateAgent = async (id, updates = {}) => {
         params.push(JSON.stringify(updates[field]));
       } else {
         fields.push(`${field} = $${paramIndex++}`);
-        params.push(updates[field]);
+        params.push(sanitizeString(updates[field]));
       }
     }
   }
@@ -104,164 +128,91 @@ const rateAgent = async (id, rating) => {
   return result.rows[0] || null;
 };
 
-const countAgents = async (filters = {}) => {
-  let sql = `SELECT COUNT(*) as total FROM headhunter_agents WHERE 1=1`;
-  const params = [];
-  let paramIndex = 1;
+// ── Rotas Express ──────────────────────────────────────────────
 
-  if (filters.specialty) {
-    sql += ` AND specialty = $${paramIndex++}`;
-    params.push(filters.specialty);
+// Listar agentes (com filtros via query string)
+router.get('/', async (req, res) => {
+  try {
+    const { specialty, status, minRating, limit, offset } = req.query;
+    const agents = await listAgents({ specialty, status, minRating }, limit, offset);
+    res.json({ success: true, data: agents });
+  } catch (error) {
+    console.error('[NEXUS-HH] ❌ Erro ao listar agentes:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
   }
+});
 
-  if (filters.status) {
-    sql += ` AND status = $${paramIndex++}`;
-    params.push(filters.status);
+// Obter agente por ID
+router.get('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const agent = await getAgent(id);
+    if (!agent) {
+      return res.status(404).json({ success: false, error: 'Agente não encontrado', code: 'NOT_FOUND' });
+    }
+    res.json({ success: true, data: agent });
+  } catch (error) {
+    console.error('[NEXUS-HH] ❌ Erro ao obter agente:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
   }
+});
 
-  const result = await query(sql, params);
-  return parseInt(result.rows[0].total, 10);
-};
-
-const listSpecialties = async () => {
-  const result = await query(
-    `SELECT DISTINCT specialty, COUNT(*) as count FROM headhunter_agents GROUP BY specialty ORDER BY count DESC`
-  );
-  return result.rows;
-};
-
-// ── Rotas Express ─────────────────────────────────────────────
-
-router.post('/agents', async (req, res) => {
+// Criar agente
+router.post('/', validate(createAgentSchema, 'body'), async (req, res) => {
   try {
     const { name, specialty, capabilities } = req.body;
-    if (!name || !specialty) return res.status(400).json({ error: 'Campos obrigatórios: name, specialty' });
     const agent = await registerAgent(name, specialty, capabilities);
     res.status(201).json({ success: true, data: agent });
   } catch (error) {
-    res.status(500).json({ error: 'Falha ao registar agente', details: error.message });
+    console.error('[NEXUS-HH] ❌ Erro ao criar agente:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
   }
 });
 
-router.get('/agents/:id', async (req, res) => {
+// Actualizar agente
+router.put('/:id', validate(updateAgentSchema, 'body'), async (req, res) => {
   try {
-    const agent = await getAgent(req.params.id);
-    if (!agent) return res.status(404).json({ error: 'Agente não encontrado' });
-    res.json({ success: true, data: agent });
-  } catch (error) {
-    res.status(500).json({ error: 'Falha ao obter agente', details: error.message });
-  }
-});
-
-router.get('/agents', async (req, res) => {
-  try {
-    const { specialty, status, minRating, limit = '50', offset = '0' } = req.query;
-    const filters = { specialty, status, minRating };
-    const agents = await listAgents(filters, parseInt(limit, 10), parseInt(offset, 10));
-    const total = await countAgents(filters);
-    res.json({ success: true, data: agents, total, limit: parseInt(limit, 10), offset: parseInt(offset, 10) });
-  } catch (error) {
-    res.status(500).json({ error: 'Falha ao listar agentes', details: error.message });
-  }
-});
-
-router.put('/agents/:id', async (req, res) => {
-  try {
-    const agent = await updateAgent(req.params.id, req.body);
-    if (!agent) return res.status(404).json({ error: 'Agente não encontrado' });
-    res.json({ success: true, data: agent });
-  } catch (error) {
-    res.status(500).json({ error: 'Falha ao actualizar agente', details: error.message });
-  }
-});
-
-router.patch('/agents/:id/deactivate', async (req, res) => {
-  try {
-    const agent = await deactivateAgent(req.params.id);
-    if (!agent) return res.status(404).json({ error: 'Agente não encontrado' });
-    res.json({ success: true, data: agent });
-  } catch (error) {
-    res.status(500).json({ error: 'Falha ao desactivar agente', details: error.message });
-  }
-});
-
-router.patch('/agents/:id/rate', async (req, res) => {
-  try {
-    const { rating } = req.body;
-    if (rating === undefined || isNaN(parseFloat(rating))) return res.status(400).json({ error: 'Campo obrigatório: rating (0-5)' });
-    const agent = await rateAgent(req.params.id, rating);
-    if (!agent) return res.status(404).json({ error: 'Agente não encontrado' });
-    res.json({ success: true, data: agent });
-  } catch (error) {
-    res.status(500).json({ error: 'Falha ao classificar agente', details: error.message });
-  }
-});
-
-router.get('/specialties', async (req, res) => {
-  try {
-    const specialties = await listSpecialties();
-    res.json({ success: true, data: specialties });
-  } catch (error) {
-    res.status(500).json({ error: 'Falha ao listar especialidades', details: error.message });
-  }
-});
-
-router.get('/stats', async (req, res) => {
-  try {
-    const total = await countAgents();
-    const available = await countAgents({ status: 'available' });
-    const inactive = await countAgents({ status: 'inactive' });
-    const specialties = await listSpecialties();
-    res.json({ success: true, data: { total, available, inactive, specialties } });
-  } catch (error) {
-    res.status(500).json({ error: 'Falha ao obter estatísticas', details: error.message });
-  }
-});
-
-// 🔥 NOVA ROTA: O RADAR INTELIGENTE (CAÇADOR NO GITHUB) 🔥
-router.post('/scan', async (req, res) => {
-  try {
-    const { tema } = req.body;
-    const queryTema = tema || "autonomous AI agent micro-saas";
-    
-    console.log(`[📡 Radar API] Iniciando varredura global no GitHub para: ${queryTema}`);
-
-    // Importações dinâmicas para aceder ao Cérebro ESM a partir do CommonJS (Backend)
-    const { chamarRoteador } = await import('../../src/config/keyRotator.js');
-    const { buscar_no_github } = await import('../../src/tools/githubSearch.js');
-
-    const reposBrutos = await buscar_no_github(`${queryTema} created:>=2026-01-01`);
-    
-    const prompt = `
-    Extrai os 3 melhores projetos deste log:\n${reposBrutos.substring(0, 5000)}
-    Devolve ESTRITAMENTE um array JSON contendo:
-    [{"name": "NomeDoRepo", "specialty": "Resumo de 3 palavras", "capabilities": {"descricao": "O que faz"}, "status": "available", "rating": 5.0}]
-    `;
-
-    const aiResponse = await chamarRoteador([{ role: "user", content: prompt }]);
-    const textJson = aiResponse.content.replace(/```json/g, '').replace(/```/g, '').trim();
-    const agentesNovos = JSON.parse(textJson);
-
-    let inseridos = 0;
-    for (const ag of agentesNovos) {
-      // Usando a query base que já estava configurada no seu ficheiro
-      const check = await query('SELECT id FROM headhunter_agents WHERE name = $1', [ag.name]);
-      if (check.rows.length === 0) {
-        await query(
-          'INSERT INTO headhunter_agents (name, specialty, capabilities, status, rating, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())',
-          [ag.name, ag.specialty, JSON.stringify(ag.capabilities), ag.status || 'available', ag.rating || 4.5]
-        );
-        inseridos++;
-      }
+    const { id } = req.params;
+    const agent = await updateAgent(id, req.body);
+    if (!agent) {
+      return res.status(404).json({ success: false, error: 'Agente não encontrado', code: 'NOT_FOUND' });
     }
-
-    res.json({ success: true, message: `Radar finalizado! Encontrámos ${inseridos} novos projetos.`, data: agentesNovos });
+    res.json({ success: true, data: agent });
   } catch (error) {
-    console.error("[ERRO RADAR]", error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('[NEXUS-HH] ❌ Erro ao actualizar agente:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
   }
 });
 
-module.exports = {
-  router, registerAgent, getAgent, listAgents, updateAgent, deactivateAgent, rateAgent, countAgents, listSpecialties
-};
+// Avaliar agente
+router.post('/:id/rate', validate(rateAgentSchema, 'body'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rating } = req.body;
+    const agent = await rateAgent(id, rating);
+    if (!agent) {
+      return res.status(404).json({ success: false, error: 'Agente não encontrado', code: 'NOT_FOUND' });
+    }
+    res.json({ success: true, data: agent });
+  } catch (error) {
+    console.error('[NEXUS-HH] ❌ Erro ao avaliar agente:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
+  }
+});
+
+// Desactivar agente
+router.delete('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const agent = await deactivateAgent(id);
+    if (!agent) {
+      return res.status(404).json({ success: false, error: 'Agente não encontrado', code: 'NOT_FOUND' });
+    }
+    res.json({ success: true, data: agent });
+  } catch (error) {
+    console.error('[NEXUS-HH] ❌ Erro ao desactivar agente:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
+  }
+});
+
+module.exports = { router, registerAgent, getAgent, listAgents, updateAgent, deactivateAgent, rateAgent };
