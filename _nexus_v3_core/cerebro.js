@@ -39,7 +39,6 @@ const ARSENAL = {
     description: 'Lê conteúdo de ficheiros e pastas num repositório GitHub. Útil para auditar código, ler documentação e analisar estruturas.',
     parameters: ['owner', 'repo', 'path'],
     execute: async (params) => {
-      // Esta função será injetada pelo index.js com a implementação real
       if (typeof ARSENAL._injected?.githubScraper === 'function') {
         return ARSENAL._injected.githubScraper(params);
       }
@@ -77,7 +76,7 @@ const ARSENAL = {
         return ARSENAL._injected.memoryStore(params);
       }
       return { error: 'memoryStore não injetado. Configure a injeção no index.js.' };
-    };
+    },
   },
   commandCenterAPI: {
     name: 'commandCenterAPI',
@@ -149,14 +148,12 @@ setInterval(() => cleanupStaleSessions(), 30 * 60 * 1000);
 
 function estimateTokens(text) {
   if (!text) return 0;
-  // Heurística: ~4 caracteres por token para inglês, ~2 para português/cjk
   return Math.ceil(text.length / 3.5);
 }
 
 function truncateToTokenLimit(text, maxTokens) {
   const estimatedTokens = estimateTokens(text);
   if (estimatedTokens <= maxTokens) return text;
-  // Truncar proporcionalmente
   const maxChars = Math.floor(maxTokens * 3.5);
   return text.slice(0, maxChars) + '\n[... TRUNCADO — limite de tokens atingido]';
 }
@@ -199,7 +196,6 @@ function parseActions(response) {
       if (parsed.action && ARSENAL[parsed.action]) {
         actions.push({ tool: parsed.action, params: parsed.params || {} });
       }
-      // Suportar array de ações
       if (Array.isArray(parsed.actions)) {
         parsed.actions.forEach(a => {
           if (a.action && ARSENAL[a.action]) {
@@ -225,7 +221,6 @@ async function executeAction(action, sessionId) {
     return { success: false, error: `Ferramenta "${action.tool}" não existe no arsenal` };
   }
 
-  // Timeout para operação
   const timeoutPromise = new Promise((_, reject) => {
     setTimeout(() => reject(new Error(`Timeout (${OPERATION_TIMEOUT_MS}ms) na ferramenta ${action.tool}`)), OPERATION_TIMEOUT_MS);
   });
@@ -236,9 +231,7 @@ async function executeAction(action, sessionId) {
       timeoutPromise,
     ]);
 
-    // Log da ação
     console.log(`[CEREBRO] 🔧 Ação executada: ${action.tool} (sessão ${sessionId})`);
-
     return { success: true, data: result };
   } catch (err) {
     console.error(`[CEREBRO] ❌ Ação falhou: ${action.tool} — ${err.message}`);
@@ -277,7 +270,7 @@ CONTEXTO DA SESSÃO:
 - Memórias registadas: ${sessionContext.memoryWrites || 0}/${MAX_MEMORY_ENTRIES_PER_SESSION}
 
 Responda em português. Seja pragmático e direto.`;
- }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // LOOP PRINCIPAL DO CÉREBRO — Blindado contra loops infinitos
@@ -328,7 +321,6 @@ async function processCerebroLoop(sessionId, userMessage, options = {}) {
   }
 
   if (session.totalTokensUsed >= MAX_CONTEXT_TOKENS) {
-    // Truncar histórico antigo para libertar espaço
     const truncated = truncateHistory(session);
     if (!truncated) {
       return {
@@ -485,10 +477,8 @@ function sleep(ms) {
 
 function truncateHistory(session) {
   if (session.history.length <= 2) return false;
-  // Remover entradas mais antigas até libertar 20% do contexto
   const removeCount = Math.ceil(session.history.length * 0.3);
   session.history = session.history.slice(removeCount);
-  // Recalcular tokens
   session.totalTokensUsed = session.history.reduce((sum, entry) => {
     return sum + estimateTokens(entry.user) + estimateTokens(entry.assistant);
   }, 0);
@@ -547,25 +537,16 @@ async function processWebhook(payload) {
 // ═══════════════════════════════════════════════════════════════
 
 module.exports = {
-  // Loop principal
   processCerebroLoop,
   processWebhook,
-
-  // Arsenal
   ARSENAL,
   injectArsenal,
-
-  // Sessões
   getSession,
   resetSession,
   getSessionMetrics,
-
-  // Utilitários
   estimateTokens,
   truncateToTokenLimit,
   parseActions,
-
-  // Constantes (para referência externa)
   MAX_ITERATIONS_PER_SESSION,
   MAX_TOKENS_PER_ITERATION,
   MAX_CONTEXT_TOKENS,
