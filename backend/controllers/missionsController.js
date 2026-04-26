@@ -1,22 +1,46 @@
 /**
  * ============================================================
- * NEXUS COMMAND CENTER — Missions Controller
+ * NEXUS COMMAND CENTER — Missions Controller (BLINDADO)
  * ============================================================
  * MIGRAÇÃO COMPLETA: new Map() → PostgreSQL (pg)
  * Tabela: missions
  * Queries 100% parametrizadas ($1, $2, ...) — ZERO concatenação.
+ * INPUT VALIDADO: Todos os campos verificados e sanitizados.
  * ============================================================
  */
 
 const express = require('express');
 const router = express.Router();
 const { query, transaction } = require('../config/database');
+const { validate, sanitizeString } = require('../middleware/validate');
+
+// ── Schemas de Validação ──────────────────────────────────────
+const createMissionSchema = {
+  title: { type: 'string', required: true, minLength: 1, maxLength: 200, sanitize: true },
+  description: { type: 'string', required: true, minLength: 1, maxLength: 10000, sanitize: true },
+  priority: { type: 'string', required: false, enum: ['low', 'medium', 'high', 'critical'] },
+};
+
+const updateMissionSchema = {
+  title: { type: 'string', required: false, minLength: 1, maxLength: 200, sanitize: true },
+  description: { type: 'string', required: false, minLength: 1, maxLength: 10000, sanitize: true },
+  priority: { type: 'string', required: false, enum: ['low', 'medium', 'high', 'critical'] },
+  status: { type: 'string', required: false, enum: ['pending', 'in_progress', 'completed', 'failed', 'cancelled'] },
+};
+
+const assignAgentsSchema = {
+  agent_ids: { type: 'array', required: true },
+};
+
+const addResultSchema = {
+  key: { type: 'string', required: true, minLength: 1, maxLength: 100, sanitize: true },
+  value: { type: 'string', required: true, minLength: 1, maxLength: 50000, sanitize: true },
+};
 
 // ── CRUD: Missões ──────────────────────────────────────────────
 
 /**
  * Cria uma nova missão.
- * POST /api/missions
  */
 const createMission = async (title, description, priority = 'medium') => {
   const validPriorities = ['low', 'medium', 'high', 'critical'];
@@ -26,14 +50,13 @@ const createMission = async (title, description, priority = 'medium') => {
     `INSERT INTO missions (title, description, priority, status, assigned_agents, result, created_at, updated_at)
      VALUES ($1, $2, $3, 'pending', '[]', '{}', NOW(), NOW())
      RETURNING *`,
-    [title, description, safePriority]
+    [sanitizeString(title), sanitizeString(description), safePriority]
   );
   return result.rows[0];
 };
 
 /**
  * Obtém uma missão pelo ID.
- * GET /api/missions/:id
  */
 const getMission = async (id) => {
   const result = await query(
@@ -45,7 +68,6 @@ const getMission = async (id) => {
 
 /**
  * Lista missões com filtros dinâmicos e paginação.
- * GET /api/missions?status=...&priority=...&limit=...&offset=...
  */
 const listMissions = async (filters = {}, limit = 50, offset = 0) => {
   let sql = `SELECT * FROM missions WHERE 1=1`;
@@ -62,7 +84,7 @@ const listMissions = async (filters = {}, limit = 50, offset = 0) => {
     params.push(filters.priority);
   }
 
-  // Ordenação: critical primeiro, depois high, medium, low
+  // Ordenação: critical primeiro
   sql += ` ORDER BY 
     CASE priority 
       WHEN 'critical' THEN 1 
@@ -72,16 +94,19 @@ const listMissions = async (filters = {}, limit = 50, offset = 0) => {
       ELSE 5 
     END ASC, created_at DESC`;
 
+  // Limitar paginação
+  const safeLimit = Math.min(Math.max(1, parseInt(limit) || 50), 100);
+  const safeOffset = Math.max(0, parseInt(offset) || 0);
+
   sql += ` LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
-  params.push(limit, offset);
+  params.push(safeLimit, safeOffset);
 
   const result = await query(sql, params);
   return result.rows;
 };
 
 /**
- * Actualiza uma missão existente (campos dinâmicos).
- * PUT /api/missions/:id
+ * Actualiza uma missão existente.
  */
 const updateMission = async (id, updates = {}) => {
   const allowedFields = ['title', 'description', 'priority', 'status'];
@@ -92,7 +117,7 @@ const updateMission = async (id, updates = {}) => {
   for (const field of allowedFields) {
     if (updates[field] !== undefined) {
       fields.push(`${field} = $${paramIndex++}`);
-      params.push(updates[field]);
+      params.push(sanitizeString(updates[field]));
     }
   }
 
@@ -110,226 +135,161 @@ const updateMission = async (id, updates = {}) => {
 
 /**
  * Atribui agentes a uma missão.
- * PATCH /api/missions/:id/assign
  */
-const assignAgents = async (missionId, agentIds = []) => {
+const assignAgentsToMission = async (id, agentIds) => {
   const result = await query(
     `UPDATE missions SET assigned_agents = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
-    [JSON.stringify(agentIds), missionId]
+    [JSON.stringify(agentIds), id]
   );
   return result.rows[0] || null;
 };
 
 /**
- * Completa uma missão com resultado.
- * PATCH /api/missions/:id/complete
+ * Adiciona resultado a uma missão.
  */
-const completeMission = async (id, resultData = {}) => {
+const addMissionResult = async (id, key, value) => {
   const result = await query(
-    `UPDATE missions 
-     SET status = 'completed', result = $1, completed_at = NOW(), updated_at = NOW() 
-     WHERE id = $2 
-     RETURNING *`,
-    [JSON.stringify(resultData), id]
+    `UPDATE missions SET result = jsonb_set(COALESCE(result, '{}'), $1, $2), updated_at = NOW() WHERE id = $3 RETURNING *`,
+    [`{${sanitizeString(key)}}`, JSON.stringify(sanitizeString(value)), id]
   );
   return result.rows[0] || null;
 };
 
 /**
- * Elimina uma missão pelo ID.
- * DELETE /api/missions/:id
+ * Cancela uma missão.
  */
-const deleteMission = async (id) => {
+const cancelMission = async (id) => {
   const result = await query(
-    `DELETE FROM missions WHERE id = $1 RETURNING *`,
+    `UPDATE missions SET status = 'cancelled', updated_at = NOW() WHERE id = $1 RETURNING *`,
     [id]
   );
   return result.rows[0] || null;
 };
 
 /**
- * Conta o total de missões (opcionalmente filtrado).
+ * Obtém estatísticas das missões.
  */
-const countMissions = async (filters = {}) => {
-  let sql = `SELECT COUNT(*) as total FROM missions WHERE 1=1`;
-  const params = [];
-  let paramIndex = 1;
-
-  if (filters.status) {
-    sql += ` AND status = $${paramIndex++}`;
-    params.push(filters.status);
-  }
-
-  if (filters.priority) {
-    sql += ` AND priority = $${paramIndex++}`;
-    params.push(filters.priority);
-  }
-
-  const result = await query(sql, params);
-  return parseInt(result.rows[0].total, 10);
+const getMissionStats = async () => {
+  const result = await query(`
+    SELECT 
+      COUNT(*) as total_missions,
+      COUNT(*) FILTER (WHERE status = 'pending') as pending,
+      COUNT(*) FILTER (WHERE status = 'in_progress') as in_progress,
+      COUNT(*) FILTER (WHERE status = 'completed') as completed,
+      COUNT(*) FILTER (WHERE status = 'failed') as failed,
+      COUNT(*) FILTER (WHERE priority = 'critical') as critical
+    FROM missions
+  `);
+  return result.rows[0];
 };
 
-/**
- * Obtém o painel (dashboard) de missões.
- */
-const getDashboard = async () => {
-  const byStatus = await query(
-    `SELECT status, COUNT(*) as count FROM missions GROUP BY status ORDER BY count DESC`
-  );
+// ── Rotas Express ──────────────────────────────────────────────
 
-  const byPriority = await query(
-    `SELECT priority, COUNT(*) as count FROM missions GROUP BY priority ORDER BY count DESC`
-  );
-
-  const recent = await query(
-    `SELECT id, title, status, priority, created_at FROM missions ORDER BY created_at DESC LIMIT 10`
-  );
-
-  const overdue = await query(
-    `SELECT id, title, status, priority, created_at FROM missions 
-     WHERE status NOT IN ('completed', 'cancelled') 
-     AND created_at < NOW() - INTERVAL '7 days'
-     ORDER BY created_at ASC`
-  );
-
-  return {
-    byStatus: byStatus.rows,
-    byPriority: byPriority.rows,
-    recent: recent.rows,
-    overdue: overdue.rows
-  };
-};
-
-// ── Rotas Express ─────────────────────────────────────────────
-
-// POST /api/missions — Criar missão
-router.post('/', async (req, res) => {
+// Listar missões
+router.get('/', async (req, res) => {
   try {
-    const { title, description, priority } = req.body;
-
-    if (!title) {
-      return res.status(400).json({
-        error: 'Campo obrigatório: title'
-      });
-    }
-
-    const mission = await createMission(title, description, priority);
-    res.status(201).json({ success: true, data: mission });
+    const { status, priority, limit, offset } = req.query;
+    const missions = await listMissions({ status, priority }, limit, offset);
+    res.json({ success: true, data: missions });
   } catch (error) {
-    console.error('[MISSIONS] Erro ao criar missão:', error.message);
-    res.status(500).json({ error: 'Falha ao criar missão', details: error.message });
+    console.error('[NEXUS-MISSIONS] ❌ Erro ao listar missões:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
   }
 });
 
-// GET /api/missions/:id — Obter missão por ID
+// Estatísticas
+router.get('/stats', async (req, res) => {
+  try {
+    const stats = await getMissionStats();
+    res.json({ success: true, data: stats });
+  } catch (error) {
+    console.error('[NEXUS-MISSIONS] ❌ Erro ao obter estatísticas:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
+  }
+});
+
+// Obter missão por ID
 router.get('/:id', async (req, res) => {
   try {
     const mission = await getMission(req.params.id);
     if (!mission) {
-      return res.status(404).json({ error: 'Missão não encontrada' });
+      return res.status(404).json({ success: false, error: 'Missão não encontrada', code: 'NOT_FOUND' });
     }
     res.json({ success: true, data: mission });
   } catch (error) {
-    console.error('[MISSIONS] Erro ao obter missão:', error.message);
-    res.status(500).json({ error: 'Falha ao obter missão', details: error.message });
+    console.error('[NEXUS-MISSIONS] ❌ Erro ao obter missão:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
   }
 });
 
-// GET /api/missions — Listar missões com filtros
-router.get('/', async (req, res) => {
+// Criar missão
+router.post('/', validate(createMissionSchema, 'body'), async (req, res) => {
   try {
-    const { status, priority, limit = '50', offset = '0' } = req.query;
-    const filters = { status, priority };
-    const missions = await listMissions(filters, parseInt(limit, 10), parseInt(offset, 10));
-    const total = await countMissions(filters);
-    res.json({ success: true, data: missions, total, limit: parseInt(limit, 10), offset: parseInt(offset, 10) });
+    const { title, description, priority } = req.body;
+    const mission = await createMission(title, description, priority);
+    res.status(201).json({ success: true, data: mission });
   } catch (error) {
-    console.error('[MISSIONS] Erro ao listar missões:', error.message);
-    res.status(500).json({ error: 'Falha ao listar missões', details: error.message });
+    console.error('[NEXUS-MISSIONS] ❌ Erro ao criar missão:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
   }
 });
 
-// PUT /api/missions/:id — Actualizar missão
-router.put('/:id', async (req, res) => {
+// Actualizar missão
+router.put('/:id', validate(updateMissionSchema, 'body'), async (req, res) => {
   try {
     const mission = await updateMission(req.params.id, req.body);
     if (!mission) {
-      return res.status(404).json({ error: 'Missão não encontrada' });
+      return res.status(404).json({ success: false, error: 'Missão não encontrada', code: 'NOT_FOUND' });
     }
     res.json({ success: true, data: mission });
   } catch (error) {
-    console.error('[MISSIONS] Erro ao actualizar missão:', error.message);
-    res.status(500).json({ error: 'Falha ao actualizar missão', details: error.message });
+    console.error('[NEXUS-MISSIONS] ❌ Erro ao actualizar missão:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
   }
 });
 
-// PATCH /api/missions/:id/assign — Atribuir agentes
-router.patch('/:id/assign', async (req, res) => {
+// Atribuir agentes
+router.post('/:id/assign', validate(assignAgentsSchema, 'body'), async (req, res) => {
   try {
-    const { agentIds } = req.body;
-    if (!Array.isArray(agentIds)) {
-      return res.status(400).json({ error: 'Campo obrigatório: agentIds (array)' });
-    }
-    const mission = await assignAgents(req.params.id, agentIds);
+    const { agent_ids } = req.body;
+    const mission = await assignAgentsToMission(req.params.id, agent_ids);
     if (!mission) {
-      return res.status(404).json({ error: 'Missão não encontrada' });
+      return res.status(404).json({ success: false, error: 'Missão não encontrada', code: 'NOT_FOUND' });
     }
     res.json({ success: true, data: mission });
   } catch (error) {
-    console.error('[MISSIONS] Erro ao atribuir agentes:', error.message);
-    res.status(500).json({ error: 'Falha ao atribuir agentes', details: error.message });
+    console.error('[NEXUS-MISSIONS] ❌ Erro ao atribuir agentes:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
   }
 });
 
-// PATCH /api/missions/:id/complete — Completar missão
-router.patch('/:id/complete', async (req, res) => {
+// Adicionar resultado
+router.post('/:id/result', validate(addResultSchema, 'body'), async (req, res) => {
   try {
-    const { result: resultData } = req.body;
-    const mission = await completeMission(req.params.id, resultData);
+    const { key, value } = req.body;
+    const mission = await addMissionResult(req.params.id, key, value);
     if (!mission) {
-      return res.status(404).json({ error: 'Missão não encontrada' });
+      return res.status(404).json({ success: false, error: 'Missão não encontrada', code: 'NOT_FOUND' });
     }
     res.json({ success: true, data: mission });
   } catch (error) {
-    console.error('[MISSIONS] Erro ao completar missão:', error.message);
-    res.status(500).json({ error: 'Falha ao completar missão', details: error.message });
+    console.error('[NEXUS-MISSIONS] ❌ Erro ao adicionar resultado:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
   }
 });
 
-// DELETE /api/missions/:id — Eliminar missão
+// Cancelar missão
 router.delete('/:id', async (req, res) => {
   try {
-    const mission = await deleteMission(req.params.id);
+    const mission = await cancelMission(req.params.id);
     if (!mission) {
-      return res.status(404).json({ error: 'Missão não encontrada' });
+      return res.status(404).json({ success: false, error: 'Missão não encontrada', code: 'NOT_FOUND' });
     }
     res.json({ success: true, data: mission });
   } catch (error) {
-    console.error('[MISSIONS] Erro ao eliminar missão:', error.message);
-    res.status(500).json({ error: 'Falha ao eliminar missão', details: error.message });
+    console.error('[NEXUS-MISSIONS] ❌ Erro ao cancelar missão:', error.message);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor', code: 'INTERNAL_ERROR' });
   }
 });
 
-// GET /api/missions/dashboard/overview — Dashboard
-router.get('/dashboard/overview', async (req, res) => {
-  try {
-    const dashboard = await getDashboard();
-    res.json({ success: true, data: dashboard });
-  } catch (error) {
-    console.error('[MISSIONS] Erro ao obter dashboard:', error.message);
-    res.status(500).json({ error: 'Falha ao obter dashboard', details: error.message });
-  }
-});
-
-module.exports = {
-  router,
-  createMission,
-  getMission,
-  listMissions,
-  updateMission,
-  assignAgents,
-  completeMission,
-  deleteMission,
-  countMissions,
-  getDashboard
-};
+module.exports = { router, createMission, getMission, listMissions, updateMission, assignAgentsToMission, addMissionResult, cancelMission, getMissionStats };
