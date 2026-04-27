@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0a0e17;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #1e293b;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #334155;
+  }
+}
+
+@layer components {
+  .nexus-input {
+    @apply bg-nexus-surface border border-nexus-border rounded-lg px-4 py-2.5 text-nexus-text placeholder-nexus-textMuted focus:outline-none focus:border-nexus-accent focus:ring-1 focus:ring-nexus-accent/30 transition-all duration-200;
+  }
+  .nexus-btn-primary {
+    @apply bg-nexus-accent/10 border border-nexus-accent/50 text-nexus-accent px-5 py-2.5 rounded-lg font-semibold hover:bg-nexus-accent/20 hover:border-nexus-accent transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .nexus-btn-danger {
+    @apply bg-nexus-danger/10 border border-nexus-danger/50 text-nexus-danger px-5 py-2.5 rounded-lg font-semibold hover:bg-nexus-danger/20 hover:border-nexus-danger transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .nexus-card {
+    @apply bg-nexus-surface border border-nexus-border rounded-xl p-5;
+  }
+  .nexus-label {
+    @apply text-xs uppercase tracking-wider text-nexus-textMuted font-semibold mb-1.5 block;
+  }
+}
